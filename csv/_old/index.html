@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Geodecode CSV</title>
+    <meta name="viewport" content="initial-scale=1.0">
+    <meta charset="utf-8">
+    <link type="text/css" rel="stylesheet" href="materialize.css"  media="screen,projection"/>
+  </head>
+  <body class="teal">
+
+    <div class="container">
+      <div class="row" style="margin-top:15%;">
+        <div class="col s6 offset-s3">
+          <div class="card hoverable">
+            <div class="card-content">
+              <span class="card-title teal-text">Decodifica Geo</span>
+              <form action="upload.php" method="post" enctype="multipart/form-data">
+                <div class="file-field input-field">
+                  <div class="btn">
+                    <span>File CSV</span>
+                    <input type="file" name="userfile" id="userfile">
+                  </div>
+                  <div class="file-path-wrapper">
+                    <input class="file-path validate" type="text">
+                  </div>
+                </div>
+                <br>
+                <p class="range-field">
+                  <span class="grey-text">Numero della colonna contente i nomi da convertire</span>
+                  <input type="range" id="column" name="column" value="1" min="1" max="100" />
+                </p>
+                <br>&nbsp<br>
+                <input class="waves-effect waves-light btn" type="submit" value="Upload">
+              </form>
+            </div>
+            <div class="card-action" id="cardAction">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <script src="https://code.jquery.com/jquery-3.1.1.js" integrity="sha256-16cdPddA6VdVInumRGo6IbivbERE8p7CQR3HzTBuELA=" crossorigin="anonymous"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD0dL6PObpx1wtHPywylFs3QDSnHT3p0e4" async defer></script>
+    <script src="materialize.js"></script>
+
+
+    <script>
+      var geocoder;
+      var csvText;
+      var locations=[];
+      var locationsAddresses=[];
+
+      $(document).ready(function() {
+
+          geocoder = new google.maps.Geocoder();
+
+          var uploadDone = getUrlParameter("uploadDone");
+          var fileName = getUrlParameter("fileName");
+          var columnNumber= getUrlParameter("column");
+
+          if((uploadDone==1)&&(fileName!="")){
+            $.ajax({
+                type: "GET",
+                url: "files/"+fileName,
+                dataType: "text",
+                async: false,
+                success: function(data) {
+                  csvText=data;
+                  locations = getLocationsName(csvText,columnNumber);
+                }
+            });
+            //Richiamo getGeoCoordinates gli indirizzi e la funzione che mi deve mostrare i risultati
+            getGeoCoordinates(locations, function(addresses){
+              csvStrin = getCsvString(csvText, columnNumber, addresses);
+              downloadCSVButton(csvStrin, fileName);
+            });
+          }else{
+            var why= getUrlParameter("why");
+            switch (why) {
+              case "notFound":
+                alert("Nessun file selezionato!");
+                break;
+              case "ext":
+                alert("Deve essere un file CSV!");
+                break;
+              case "upload":
+                alert("Caricamento non riuscito!");
+                break;
+            }
+          }
+
+      });
+
+      function getGeoCoordinates(locations, callback){
+        for (var i = 0; i < locations.length; i++) {
+          address = locations[i];
+          geocoder.geocode( { 'address': address}, function(results, status) {
+            if (status == 'OK') {
+              locationsAddresses.push(String(results[0].geometry.location));
+            } else {
+              locationsAddresses.push('0');
+            }
+            if(locationsAddresses.length==locations.length){
+              callback(locationsAddresses);
+            }
+          });
+        }
+        /*for (var x = 0; x < locations.length; x++) {
+            $.getJSON('http://maps.googleapis.com/maps/api/geocode/json?address='+locations[x]+'&sensor=false', null, function (data) {
+                var p = data.results[0].geometry.location
+                locationsAddresses.push(p.lat+","+p.lng)
+                if(locationsAddresses.length==locations.length){
+                  callback(locationsAddresses);
+                }
+            });
+        }*/
+      }
+
+      function getLocationsName(allText, position) {
+          var allTextLines = allText.split(/\r\n|\n/);
+          var csvLocations = [];
+          for (var i=1; i<allTextLines.length-1; i++) {
+              var data = allTextLines[i].split(',');
+              csvLocations.push(data[position-1]);
+          }
+          return csvLocations;
+      }
+
+      //Ritorna la stringa CSV con le coordinate al posto dei nomi dei luoghi
+      function getCsvString(csvText, position, coordinates) {
+          var csvString="";
+          var csvTextLines = csvText.split(/\r\n|\n/);
+          for (var i=0; i<csvTextLines.length-1; i++) {
+              var commaValues = csvTextLines[i].split(',');
+              for (var j = 0; j < commaValues.length; j++) {
+                if((j==position-1)&&(i!=0)){
+                  csvString+=coordinates[i-1]+",";
+                }else if(j!=commaValues.length-1){
+                  csvString+=commaValues[j]+",";
+                }else{
+                  csvString+=commaValues[j]+"\n";
+                }
+              }
+          }
+          //alert(csvString);
+          return csvString;
+      }
+
+      //Crea pulsante Download
+      function downloadCSVButton(csvStrin, fileName){
+        var cardAction = $("#cardAction");
+        $('<a>Scarica il file convertito</a>')
+            .attr('id','downloadFile')
+            .attr('href','data:text/csv;charset=utf8,' + encodeURIComponent(csvStrin))
+            .attr('download',"files\\"+fileName)
+            .appendTo(cardAction);
+      }
+
+      var getUrlParameter = function getUrlParameter(sParam) {
+        var sPageURL = decodeURIComponent(window.location.search.substring(1)),
+            sURLVariables = sPageURL.split('&'),
+            sParameterName,
+            i;
+        for (i = 0; i < sURLVariables.length; i++) {
+          sParameterName = sURLVariables[i].split('=');
+
+          if (sParameterName[0] === sParam) {
+            return sParameterName[1] === undefined ? true : sParameterName[1];
+          }
+        }
+      };
+
+    </script>
+
+  </body>
+</html>

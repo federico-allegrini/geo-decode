@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Geodecode Excel</title>
+    <meta name="viewport" content="initial-scale=1.0">
+    <meta charset="utf-8">
+    <link rel="icon" href="/prog/geoDecode/img/favicon.ico" />
+    <link href='http://fonts.googleapis.com/css?family=Roboto' rel='stylesheet' type='text/css'>
+    <link type="text/css" rel="stylesheet" href="css/materialize.css"  media="screen,projection"/>
+  </head>
+  <body class="teal">
+
+    <div class="container">
+      <div class="row" style="margin-top:15%;">
+        <div class="col s6 offset-s3">
+          <div class="card hoverable">
+            <div class="card-content">
+              <span class="card-title teal-text">Decodifica Geo</span>
+              <form action="upload.php" method="post" enctype="multipart/form-data">
+                <div class="file-field input-field">
+                  <div class="btn">
+                    <span>File XLS</span>
+                    <input type="file" name="userfile" id="userfile">
+                  </div>
+                  <div class="file-path-wrapper">
+                    <input class="file-path validate" type="text">
+                  </div>
+                </div>
+                <br>
+                <div class="row">
+                  <div class="col s6">
+                    <p class="range-field">
+                      <span class="grey-text">Numero della colonna contente i nomi da convertire</span>
+                      <input type="range" id="column" name="column" value="1" min="1" max="20" />
+                    </p>
+                  </div>
+                  <div class="col s6">
+                    <p class="range-field">
+                      <span class="grey-text">Numero della prima riga contente i nomi da convertire</span>
+                      <input type="range" id="row" name="row" value="1" min="1" max="20" />
+                    </p>
+                  </div>
+                  <div class="col s12">
+                    <p class="range-field">
+                      <span class="grey-text">Numero della colonna di destinazione delle coordinate</span>
+                      <input type="range" id="columnCoord" name="columnCoord" value="1" min="1" max="20" />
+                    </p>
+                  </div>
+                </div>
+                <br>&nbsp<br>
+                <input class="waves-effect waves-light btn" type="submit" value="Download">
+              </form>
+            </div>
+            <!--<div class="card-action" id="cardAction">
+            </div>-->
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <script src="https://code.jquery.com/jquery-3.1.1.js" integrity="sha256-16cdPddA6VdVInumRGo6IbivbERE8p7CQR3HzTBuELA=" crossorigin="anonymous"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD0dL6PObpx1wtHPywylFs3QDSnHT3p0e4" async defer></script>
+    <script src="js/xls.js"></script>
+    <script src="js/jszip.js"></script>
+    <script src="js/xlsx.js"></script>
+    <script src="js/materialize.js"></script>
+    <script src="js/filesaver.js"></script>
+
+
+    <script>
+      var geocoder;
+      var csvText;
+      var locations=[];
+      var locationsAddresses=[];
+      var multipleArrayString;
+      var nomeFoglio;
+
+      $(document).ready(function() {
+
+          geocoder = new google.maps.Geocoder();
+
+          var uploadDone = getUrlParameter("uploadDone");
+          var fileName = getUrlParameter("fileName");
+          var columnNumber= getUrlParameter("column");
+          var rowNumber= getUrlParameter("row");
+          var columnCoord= getUrlParameter("columnCoord");
+
+          if((uploadDone==1)&&(fileName!="")){
+
+            var url = "files\\"+fileName;
+            var oReq = new XMLHttpRequest();
+            oReq.open("GET", url, true);
+            oReq.responseType = "arraybuffer";
+            oReq.onload = function(e) {
+              var arraybuffer = oReq.response;
+              var data = new Uint8Array(arraybuffer);
+              var arr = new Array();
+              for(var i = 0; i != data.length; ++i) arr[i] = String.fromCharCode(data[i]);
+              var bstr = arr.join("");
+
+              var workbook = XLS.read(bstr, {type:"binary"});
+              var csvExcelFile = to_csv(workbook);
+
+              //Ricavo i nomi delle località
+              locations = getLocationsName(csvExcelFile,columnNumber,rowNumber);
+
+              //Richiamo getGeoCoordinates gli indirizzi e la funzione che mi deve mostrare i risultati
+              getGeoCoordinates(locations, function(addresses){
+                multipleArrayString = getMultipleArrayValue(csvExcelFile, columnCoord, rowNumber, addresses);
+                var wb = new Workbook();
+                ws = sheet_from_array_of_arrays(multipleArrayString);
+                wb.SheetNames.push(nomeFoglio);
+                wb.Sheets[nomeFoglio] = ws;
+                var wbout = XLSX.write(wb, {bookType:'xlsx', bookSST:true, type: 'binary'});
+                saveAs(new Blob([s2ab(wbout)],{type:"application/octet-stream"}), fileName+".xlsx")
+                reloadAfterDownload();
+
+                //csvStrin = getCsvString(csvExcelFile, columnCoord, rowNumber, addresses);
+                //downloadCSVButton(csvStrin, fileName);
+              });
+
+            }
+            oReq.send();
+
+            /*$.ajax({
+                type: "GET",
+                url: "files\\"+fileName,
+                dataType: "text",
+                async: false,
+                success: function(data) {
+                  csvText=data;
+                  locations = getLocationsName(csvText,columnNumber, rownumber);
+                }
+            });*/
+
+          }else{
+            var why= getUrlParameter("why");
+            switch (why) {
+              case "notFound":
+                alert("Nessun file selezionato!");
+                break;
+              case "ext":
+                alert("Deve essere un file CSV!");
+                break;
+              case "upload":
+                alert("Caricamento non riuscito!");
+                break;
+            }
+          }
+
+      });
+
+      function getGeoCoordinates(locations, callback){
+        for (var i = 0; i < locations.length; i++) {
+          address = locations[i];
+          geocoder.geocode( { 'address': address}, function(results, status) {
+            if (status == 'OK') {
+              locationsAddresses.push(String(results[0].geometry.location));
+            } else {
+              locationsAddresses.push('0');
+            }
+            if(locationsAddresses.length==locations.length){
+              callback(locationsAddresses);
+            }
+          });
+        }
+
+        //Old CSV
+        /*for (var x = 0; x < locations.length; x++) {
+            $.getJSON('http://maps.googleapis.com/maps/api/geocode/json?address='+locations[x]+'&sensor=false', null, function (data) {
+                var p = data.results[0].geometry.location
+                locationsAddresses.push(p.lat+","+p.lng)
+                if(locationsAddresses.length==locations.length){
+                  callback(locationsAddresses);
+                }
+            });
+        }*/
+      }
+
+      function getLocationsName(allText, positionColumn, positionRow) {
+          var allTextLines = allText.split(/\r\n|\n/);
+          var csvLocations = [];
+          positionRow++;
+          for (var i=positionRow; i<allTextLines.length-1; i++) {
+              var data = allTextLines[i].split(',');
+              csvLocations.push(data[positionColumn-1]);
+          }
+          return csvLocations;
+      }
+
+      //_OLD_//Ritorna la stringa CSV con le coordinate al posto dei nomi dei luoghi
+      /*function getCsvString(csvText, positionColumn, positionRow, coordinates) {
+          var csvString="";
+          var csvTextLines = csvText.split(/\r\n|\n/);
+          for (var i=0; i<csvTextLines.length-1; i++) {
+
+
+              //Controllo per eliminare le virgole all'interno dei campi
+              var commaValues = csvTextLines[i].split(',');
+              var commaValuesOk = [];
+              var commaValuesAppo = "";
+              var intoMultipleComma = false;
+              for (var x = 0; x < commaValues.length; x++) {
+                //console.log(commaValues[x].substring(0, 1)+"_"+commaValues[x].slice(-1));
+                if((commaValues[x].substring(0, 1)!="\"")&&(commaValues[x].slice(-1)!="\"")){
+                  if(intoMultipleComma){
+                    commaValuesAppo+=commaValues[x]+" ";
+                  }else{
+                    commaValuesOk.push(commaValues[x]);
+                  }
+                }else {
+                  commaValuesAppo+=commaValues[x].replace("\"", "")+" ";
+                  if(commaValues[x].substring(0, 1)!="\""){
+                    intoMultipleComma=false;
+                    commaValuesOk.push(commaValuesAppo);
+                    commaValuesAppo="";
+                  }else {
+                    intoMultipleComma=true;
+                  }
+                }
+              }
+              //
+
+
+              for (var j = 0; j < commaValuesOk.length; j++) {
+                //Colonna in cui inserire le coordinate
+                if((j==positionColumn-1)&&(i>positionRow)){
+                  csvString+=coordinates[i-positionRow-1]+",";
+                }else if(j!=commaValuesOk.length-1){
+                  csvString+=commaValuesOk[j]+",";
+                }else{
+                  csvString+=commaValuesOk[j]+"\n";
+                }
+              }
+          }
+          alert(csvString);
+          return csvString;
+      }*/
+
+      //_OLD_//Crea pulsante Download
+      /*function downloadCSVButton(csvStrin, fileName){
+        var cardAction = $("#cardAction");
+        $('<a>Scarica il file convertito</a>')
+            .attr('id','downloadFile')
+            .attr('href','data:text/csv;charset=utf8,' + encodeURIComponent(csvStrin))
+            .attr('download',fileName)
+            .attr('onclick','reloadAfterDownload()')
+            .appendTo(cardAction);
+      }*/
+
+
+      //Ritorna l'array multiplo da passare all'esportatore
+      function getMultipleArrayValue(csvText, positionColumn, positionRow, coordinates) {
+          var multipleArray=[];
+          var innerArray=[];
+          var csvTextLines = csvText.split(/\r\n|\n/);
+          for (var i=0; i<csvTextLines.length-1; i++) {
+
+              //Svuoto l'array interno
+              innerArray=[];
+
+              //Controllo per eliminare le virgole all'interno dei campi
+              var commaValues = csvTextLines[i].split(',');
+              var commaValuesOk = [];
+              var commaValuesAppo = "";
+              var intoMultipleComma = false;
+              for (var x = 0; x < commaValues.length; x++) {
+                if((commaValues[x].substring(0, 1)!="\"")&&(commaValues[x].slice(-1)!="\"")){
+                  if(intoMultipleComma){
+                    commaValuesAppo+=commaValues[x]+" ";
+                  }else{
+                    commaValuesOk.push(commaValues[x]);
+                  }
+                }else {
+                  commaValuesAppo+=commaValues[x].replace("\"", "")+" ";
+                  if(commaValues[x].substring(0, 1)!="\""){
+                    intoMultipleComma=false;
+                    commaValuesOk.push(commaValuesAppo);
+                    commaValuesAppo="";
+                  }else {
+                    intoMultipleComma=true;
+                  }
+                }
+              }
+
+              //Nome foglio
+              if(i==0){
+                nomeFoglio=csvTextLines[i];
+              }
+
+              //Riempi l'array riga inner
+              for (var j = 0; j < commaValuesOk.length; j++) {
+                //Colonna in cui inserire le coordinate
+                if((j==positionColumn-1)&&(i>positionRow)){
+                  innerArray.push(coordinates[i-positionRow-1]);
+                }else if(j!=commaValuesOk.length-1){
+                  innerArray.push(commaValuesOk[j]);
+                }else{
+                  innerArray.push(commaValuesOk[j]);
+                }
+              }
+
+              //Non inserire il nome del foglio e la riga vuota
+              if(i>1){
+                //Inserisci inner array
+                multipleArray.push(innerArray);
+              }
+          }
+          console.log(multipleArray);
+          return multipleArray;
+      }
+
+
+      function reloadAfterDownload(){
+        window.location.href = "index.html";
+      }
+
+      var getUrlParameter = function getUrlParameter(sParam) {
+        var sPageURL = decodeURIComponent(window.location.search.substring(1)),
+            sURLVariables = sPageURL.split('&'),
+            sParameterName,
+            i;
+        for (i = 0; i < sURLVariables.length; i++) {
+          sParameterName = sURLVariables[i].split('=');
+
+          if (sParameterName[0] === sParam) {
+            return sParameterName[1] === undefined ? true : sParameterName[1];
+          }
+        }
+      };
+
+      //Converte un file binario XLS in CSV
+      function to_csv(workbook) {
+        var result = [];
+        workbook.SheetNames.forEach(function(sheetName) {
+          var csv = XLS.utils.make_csv(workbook.Sheets[sheetName]);
+          if(csv.length > 0){
+            result.push(sheetName);
+            result.push("");
+            result.push(csv);
+          }
+        });
+        return result.join("\n");
+      }
+
+
+      //Funzioni esportazione XLSX
+      function datenum(v, date1904) {
+      	if(date1904) v+=1462;
+      	var epoch = Date.parse(v);
+      	return (epoch - new Date(Date.UTC(1899, 11, 30))) / (24 * 60 * 60 * 1000);
+      }
+
+      function sheet_from_array_of_arrays(data, opts) {
+      	var ws = {};
+      	var range = {s: {c:10000000, r:10000000}, e: {c:0, r:0 }};
+      	for(var R = 0; R != data.length; ++R) {
+      		for(var C = 0; C != data[R].length; ++C) {
+      			if(range.s.r > R) range.s.r = R;
+      			if(range.s.c > C) range.s.c = C;
+      			if(range.e.r < R) range.e.r = R;
+      			if(range.e.c < C) range.e.c = C;
+      			var cell = {v: data[R][C] };
+      			if(cell.v == null) continue;
+      			var cell_ref = XLSX.utils.encode_cell({c:C,r:R});
+
+      			if(typeof cell.v === 'number') cell.t = 'n';
+      			else if(typeof cell.v === 'boolean') cell.t = 'b';
+      			else if(cell.v instanceof Date) {
+      				cell.t = 'n'; cell.z = XLSX.SSF._table[14];
+      				cell.v = datenum(cell.v);
+      			}
+      			else cell.t = 's';
+
+      			ws[cell_ref] = cell;
+      		}
+      	}
+      	if(range.s.c < 10000000) ws['!ref'] = XLSX.utils.encode_range(range);
+      	return ws;
+      }
+
+      function Workbook() {
+      	if(!(this instanceof Workbook)) return new Workbook();
+      	this.SheetNames = [];
+      	this.Sheets = {};
+      }
+
+      function s2ab(s) {
+        var buf = new ArrayBuffer(s.length);
+        var view = new Uint8Array(buf);
+        for (var i=0; i!=s.length; ++i) view[i] = s.charCodeAt(i) & 0xFF;
+        return buf;
+      }
+
+    </script>
+
+  </body>
+</html>
